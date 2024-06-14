@@ -17,7 +17,6 @@
 #include <SensirionI2cSht4x.h>
 #include <Wire.h>
 #include <Adafruit_Sensor_Modified.h>
-
 #include <TinyGPS++.h>
 #include <SoftwareSerial.h>
 #include "SparkFun_VL53L1X.h"
@@ -31,7 +30,6 @@
 #define XCLK_GPIO_NUM      0
 #define SIOD_GPIO_NUM     26
 #define SIOC_GPIO_NUM     27
-
 #define Y9_GPIO_NUM       35
 #define Y8_GPIO_NUM       34
 #define Y7_GPIO_NUM       39
@@ -43,6 +41,8 @@
 #define VSYNC_GPIO_NUM    25
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
+
+#define CHUNK_SIZE_PHOTO 4096 // Define chunk size as 4 KB
 
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP  1800        /* Time ESP32 will go to sleep (in seconds) */
@@ -56,7 +56,7 @@ const char *post_url_data = "https://rm.fsv.cvut.cz/upload_container_data"; // L
 // const char *post_url_data = "https://rm.fsv.cvut.cz/upload-temperature"; // Location where images are POSTED
 bool internet_connected = false;
 
-// -----------------temp humid definitions start -----------------
+
 // macro definitions
 // make sure to use the proper definition of NO_ERROR
 #ifdef NO_ERROR
@@ -71,6 +71,7 @@ bool internet_connected = false;
 #define rxPin 12
 #define txPin 15 
 
+
 SoftwareSerial ss(rxPin, txPin);
 SensirionI2cSht4x sensor;
 TinyGPSPlus gps;
@@ -80,7 +81,7 @@ SFEVL53L1X distanceSensor;
 static char errorMessage[64];
 static int16_t error;
 
-unsigned int timeLimitConnectionGPS = 5000; // Milliseconds to get the connection
+unsigned int timeLimitConnectionGPS = 25000; // Milliseconds to get the connection
 unsigned long GPSstartTime = millis();  // Record the start time
 bool gpsUpdated = false;
 
@@ -89,7 +90,9 @@ float aHumidity = 0.0;
 float aLatitude = 50.0755;
 float aLongitude = 14.4378;
 unsigned int aContID = 3;
-unsigned int aStatus = 1; // 0 je neodeslana fotka, 1 je odeslani uspesne
+unsigned int aStatus = 0; // 0 je neodeslana fotka, 1 je odeslani uspesne
+
+static const uint32_t GPSBaud = 9600;
 
 // Define the frame buffer as a global variable
 camera_fb_t * fb = NULL;
@@ -152,7 +155,7 @@ void setupCameraAndTakePhoto() {
   
   if(psramFound()){
     Serial.println("psramFound OK ");
-    config.frame_size = FRAMESIZE_SVGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
+    config.frame_size = FRAMESIZE_VGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
     config.jpeg_quality = 12;
     config.fb_location = CAMERA_FB_IN_PSRAM;  // Use PSRAM for frame buffer
     config.fb_count = 2;
@@ -224,21 +227,29 @@ void setupCameraAndTakePhoto() {
   if (WiFi.status() == WL_CONNECTED) {
     for (int attemptSendPhoto = 1; attemptSendPhoto <= maxRetriesSendPhoto; attemptSendPhoto++) {
       Serial.print("[HTTP] POST photo...\n");
+
+      size_t totalSize = fb->len;
+      size_t offset = 0;
+
       http.begin(post_url_image);
+      http.addHeader("Content-Type", "image/jpeg");
       int httpCode = http.sendRequest("POST", fb->buf, fb->len);
       if (httpCode > 0 && httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
         Serial.println(payload);
         successSendPhoto = true;
+        aStatus = 1; // confirmation for the JSON message that a photo has been sent
         http.end(); // Ensure connection is closed
         break;
       } else {
         Serial.printf("[HTTP] POST... failed, error: %s\n", http.errorToString(httpCode).c_str());
       }
+
       http.end(); // Ensure connection is closed on failure
       Serial.printf("Retrying... (%d/%d)\n", attemptSendPhoto, maxRetriesSendPhoto);
       delay(1000); // Wait before retrying
     }
+
   } else {
     Serial.println("WiFi not connected. Please check your connection.");
   }
@@ -252,12 +263,10 @@ void goToSleep(){
   Serial.println("Going to sleep now\n\n");
   delay(100);
   WiFi.disconnect(true);
-  analogReadResolution(0);
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_deep_sleep_start();
   Serial.println("This will never be printed");
 }
-
 
 void JSONsendingHTML() {
   int maxRetriesSendJSON = 5; // Number of retries for DNS and HTTP request
@@ -279,7 +288,8 @@ void JSONsendingHTML() {
 
   String jsonStr;
   serializeJson(jsonDoc, jsonStr);
-  
+  Serial.print(jsonStr);
+
   for (int attemptSendJSON = 1; attemptSendJSON <= maxRetriesSendJSON; attemptSendJSON++) {
     HTTPClient http;
     Serial.print("[HTTP] begin...\n");
@@ -314,9 +324,6 @@ void JSONsendingHTML() {
 }
 
 void temperatureHumidity(){
-  while (!Serial) {
-      delay(100);
-  }
   // Initialize I2C with custom pins
   Wire.begin(I2C_SDA, I2C_SCL);
   sensor.begin(Wire, SHT40_I2C_ADDR_44);
@@ -379,35 +386,101 @@ void measureDistance (){
 }
 
 void getGPS(){
-  ss.begin(9600);
+  digitalWrite(2, HIGH); // Turn power ON
+  
   Serial.println("getting GPS function");
 
-  while (millis() - GPSstartTime < timeLimitConnectionGPS) {  // Loop for limited time
-    while (ss.available() > 0) {
-      gps.encode(ss.read());
-      if (gps.location.isUpdated()) {
-        Serial.print("Latitude= ");
-        Serial.print(gps.location.lat(), 6);
-        Serial.print(" Longitude= ");
-        Serial.println(gps.location.lng(), 6);
-        gpsUpdated = true;
-        break;  // Exit the while loop if GPS location is updated
-      }
-    }
-    if (gpsUpdated) {
-      break;  // Exit the outer while loop if GPS location is updated
-    }
+  // GPSstartTime = millis(); // Record the start time
+
+  // while (millis() - GPSstartTime < timeLimitConnectionGPS) {  // Loop for limited time
+  //   while (ss.available() > 0) {
+  //     gps.encode(ss.read());
+  //     if (gps.location.isUpdated()) {
+  //       Serial.print("Latitude= ");
+  //       Serial.print(gps.location.lat(), 6);
+  //       Serial.print(" Longitude= ");
+  //       Serial.println(gps.location.lng(), 6);
+  //       gpsUpdated = true;
+  //       break;  // Exit the while loop if GPS location is updated
+  //     }
+  //   }
+  //   if (gpsUpdated) {
+  //     break;  // Exit the outer while loop if GPS location is updated
+  //   }
+  // }
+
+  // if (!gpsUpdated) {
+  //   Serial.println("GPS connection not established within 5 seconds.");
+  // }
+
+  // digitalWrite(2, LOW); // Turn power OFF GPS
+}
+
+void displayInfo()
+{
+  Serial.print(F("Location: ")); 
+  if (gps.location.isValid())
+  {
+    Serial.print(gps.location.lat(), 6);
+    Serial.print(F(","));
+    Serial.print(gps.location.lng(), 6);
+  }
+  else
+  {
+    Serial.print(F("INVALID"));
   }
 
-  if (!gpsUpdated) {
-    Serial.println("GPS connection not established within 5 seconds.");
+  Serial.print(F("  Date/Time: "));
+  if (gps.date.isValid())
+  {
+    Serial.print(gps.date.month());
+    Serial.print(F("/"));
+    Serial.print(gps.date.day());
+    Serial.print(F("/"));
+    Serial.print(gps.date.year());
   }
+  else
+  {
+    Serial.print(F("INVALID"));
+  }
+
+  Serial.print(F(" "));
+  if (gps.time.isValid())
+  {
+    if (gps.time.hour() < 10) Serial.print(F("0"));
+    Serial.print(gps.time.hour());
+    Serial.print(F(":"));
+    if (gps.time.minute() < 10) Serial.print(F("0"));
+    Serial.print(gps.time.minute());
+    Serial.print(F(":"));
+    if (gps.time.second() < 10) Serial.print(F("0"));
+    Serial.print(gps.time.second());
+    Serial.print(F("."));
+    if (gps.time.centisecond() < 10) Serial.print(F("0"));
+    Serial.print(gps.time.centisecond());
+  }
+  else
+  {
+    Serial.print(F("INVALID"));
+  }
+
+  Serial.println();
 }
 
 void setup (){
-  Serial.begin(9600);
+  pinMode(2, OUTPUT);   // GPS module power management
+  digitalWrite(2, HIGH); // Turn GPS power ON
 
+  Serial.begin(9600);
+  ss.begin(GPSBaud);
+  
   Serial.println("-= ESP32-CAM-CONTAINER =-");
+  temperatureHumidity();
+  measureDistance();
+
+  // getGPS(); pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
+  // jinak tam jde po UARTu nejakej bordel a cely to jde do <>
+
   if (init_wifi())
   { // Connected to WiFi
     internet_connected = true;
@@ -416,25 +489,29 @@ void setup (){
 
   if (internet_connected) {
     setupCameraAndTakePhoto(); // also sends a photo over HTTP protocol
+    JSONsendingHTML(); // sends a string to the server
   }
-  getGPS();
-  temperatureHumidity();
-  measureDistance();
-  JSONsendingHTML(); // sends a string to the server
 
   delay(100);
-  // goToSleep();
-
-  pinMode(2, OUTPUT);
-  digitalWrite(2, LOW); // Ensure the LED is off initially
+  goToSleep();
 }
 
 
 void loop() {
+  // This should never be reached because the device goes to sleep in setup()
+  // Serial.println("LOOPING LED");
+  digitalWrite(2, HIGH); // Turn on
+  // delay(2000);
+  // goToSleep();
 
-  digitalWrite(2, HIGH); // Ensure the LED is off initially
-  delay(1000);
-  digitalWrite(2, LOW); // Ensure the LED is off initially
-  delay(1000);
-  goToSleep();
+  // This sketch displays information every time a new sentence is correctly encoded.
+  while (ss.available() > 0){
+    gps.encode(ss.read());
+    if (gps.location.isUpdated()){
+      Serial.print("Latitude= "); 
+      Serial.print(gps.location.lat(), 6);
+      Serial.print(" Longitude= "); 
+      Serial.println(gps.location.lng(), 6);
+    }
+  }
 }
