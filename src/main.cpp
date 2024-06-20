@@ -45,7 +45,7 @@
 #define CHUNK_SIZE_PHOTO 4096 // Define chunk size as 4 KB
 
 #define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  1800        /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP  550        /* Time ESP32 will go to sleep (in seconds) */
 
 int pictureNumber = 0;
 const char *ssid = "pvltrv-TX1C";
@@ -67,12 +67,13 @@ bool internet_connected = false;
 #define I2C_SDA 13  // Set your SDA pin (do not use pins: 12,2,16; ok:13,14)
 #define I2C_SCL 14  // Set your SCL pin (ok pin:15; )
 #define GPS_switch 2 // pin number that is used to turn on and off the gps
+#define LEDflash 4  //
 
-#define rxPin 12
-#define txPin 15 
+#define rxPinGPS 15  // 15 pin na PCB
+#define txPinGPS 12  // 12 pin na PCB
 
 
-SoftwareSerial ss(rxPin, txPin);
+SoftwareSerial ss(rxPinGPS, txPinGPS);
 SensirionI2cSht4x sensor;
 TinyGPSPlus gps;
 HTTPClient http;
@@ -112,22 +113,16 @@ bool init_wifi() {
   int connAttempts = 5;
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED && connAttempts > 0) {
-    delay(500);
+    delay(1000);
     connAttempts--;
+    Serial.println("... ");
   }
   return WiFi.status() == WL_CONNECTED;
 }
 
 void setupCameraAndTakePhoto() {
-  // Ensure GPIO 4 is set up before camera initialization
-  pinMode(4, OUTPUT);
-  digitalWrite(4, LOW); // Ensure the LED is off initially
 
   // WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); //disable brownout detector
- 
-  // Serial.begin(115200);
-  // Serial.setDebugOutput(true);
-  //Serial.println();
 
   Serial.printf("Before init - Heap: %d, PSRAM: %d\n", ESP.getFreeHeap(), ESP.getFreePsram());
 
@@ -155,7 +150,7 @@ void setupCameraAndTakePhoto() {
   
   if(psramFound()){
     Serial.println("psramFound OK ");
-    config.frame_size = FRAMESIZE_VGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
+    config.frame_size = FRAMESIZE_SVGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
     config.jpeg_quality = 12;
     config.fb_location = CAMERA_FB_IN_PSRAM;  // Use PSRAM for frame buffer
     config.fb_count = 2;
@@ -172,67 +167,78 @@ void setupCameraAndTakePhoto() {
     return;
   }
 
-  Serial.printf("After init - Heap: %d, PSRAM: %d\n", ESP.getFreeHeap(), ESP.getFreePsram());
+  // Serial.printf("After init - Heap: %d, PSRAM: %d\n", ESP.getFreeHeap(), ESP.getFreePsram());
 
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
-    s->set_brightness(s, 0);     // -2 to 2
-    s->set_contrast(s, 0);       // -2 to 2
-    s->set_saturation(s, 0);     // -2 to 2
-    s->set_special_effect(s, 0); // 0 to 6 (0 - No Effect, 1 - Negative, 2 - Grayscale, 3 - Red Tint, 4 - Green Tint, 5 - Blue Tint, 6 - Sepia)
-    s->set_whitebal(s, 1);       // 0 = disable , 1 = enable
-    s->set_awb_gain(s, 1);       // 0 = disable , 1 = enable
-    s->set_wb_mode(s, 0);        // 0 to 4 - if awb_gain enabled (0 - Auto, 1 - Sunny, 2 - Cloudy, 3 - Office, 4 - Home)
-    s->set_exposure_ctrl(s, 1);  // 0 = disable , 1 = enable
-    s->set_aec2(s, 0);           // 0 = disable , 1 = enable
-    s->set_ae_level(s, 0);       // -2 to 2
-    s->set_aec_value(s, 300);    // 0 to 1200
-    s->set_gain_ctrl(s, 1);      // 0 = disable , 1 = enable
-    s->set_agc_gain(s, 0);       // 0 to 30
-    s->set_gainceiling(s, (gainceiling_t)2);  // 0 to 6
-    s->set_bpc(s, 0);            // 0 = disable , 1 = enable
-    s->set_wpc(s, 1);            // 0 = disable , 1 = enable
-    s->set_raw_gma(s, 1);        // 0 = disable , 1 = enable
-    s->set_lenc(s, 1);           // 0 = disable , 1 = enable
-    s->set_hmirror(s, 0);        // 0 = disable , 1 = enable
-    s->set_vflip(s, 0);          // 0 = disable , 1 = enable
-    s->set_dcw(s, 1);            // 0 = disable , 1 = enable
-    s->set_colorbar(s, 0);       // 0 = disable , 1 = enable
-    s->set_quality(s, 12);
+    // s->set_brightness(s, 0);     // -2 to 2
+    // s->set_contrast(s, 0);       // -2 to 2
+    // s->set_saturation(s, 0);     // -2 to 2
+    // s->set_special_effect(s, 0); // 0 to 6 (0 - No Effect, 1 - Negative, 2 - Grayscale, 3 - Red Tint, 4 - Green Tint, 5 - Blue Tint, 6 - Sepia)
+    // s->set_whitebal(s, 1);       // 0 = disable , 1 = enable
+    // s->set_awb_gain(s, 1);       // 0 = disable , 1 = enable
+    // s->set_wb_mode(s, 0);        // 0 to 4 - if awb_gain enabled (0 - Auto, 1 - Sunny, 2 - Cloudy, 3 - Office, 4 - Home)
+    // s->set_exposure_ctrl(s, 1);  // 0 = disable , 1 = enable
+    // s->set_ae_level(s, 0);       // -2 to 2
+    // s->set_aec_value(s, 300);    // 0 to 1200
+    // s->set_gain_ctrl(s, 1);      // 0 = disable , 1 = enable
+    // s->set_agc_gain(s, 0);       // 0 to 30
+    // s->set_gainceiling(s, (gainceiling_t)2);  // 0 to 6
+    // s->set_bpc(s, 0);            // 0 = disable , 1 = enable
+    // s->set_wpc(s, 1);            // 0 = disable , 1 = enable
+    // s->set_raw_gma(s, 1);        // 0 = disable , 1 = enable
+    // s->set_lenc(s, 1);           // 0 = disable , 1 = enable
+    // s->set_hmirror(s, 0);        // 0 = disable , 1 = enable
+    // s->set_vflip(s, 0);          // 0 = disable , 1 = enable
+    // s->set_dcw(s, 1);            // 0 = disable , 1 = enable
+    // s->set_colorbar(s, 0);       // 0 = disable , 1 = enable
+    // s->set_aec2(s, 1);           // 0 = disable , 1 = enable
+
+    s->set_gain_ctrl(s, 0);         // auto gain off
+    s->set_awb_gain(s, 1);          // Auto White Balance enable (0 or 1)
+    s->set_exposure_ctrl(s, 0);     // auto exposure off
+    s->set_brightness(s, 0);        // (-2 to 2) - set brightness
+    s->set_agc_gain(s, 0);          // set gain manually (0 - 30)
+    s->set_aec_value(s, 50);         // set exposure manually  (0-1200)
   }
 
+
+  // Ensure GPIO 4 is set up before camera initialization
+  pinMode(GPIO_NUM_4, OUTPUT);
+  digitalWrite(GPIO_NUM_4, HIGH); // Ensure the LED is off initially
+  // digitalWrite(4, HIGH); // turn on LED flash, delay after to let it turn on fully
+  delay(300);
+  // rtc_gpio_hold_en(GPIO_NUM_4);
   /* sufficient time to let the YAVG value stabilize before esp_camera_fb_get, 
   than the photo is almost perfect and I do not suffer any more of the 
   "dark tint after restart"
   */
-  digitalWrite(4, HIGH); // turn on LED flash, delay after to let it turn on fully
-  delay(200);
-  // rtc_gpio_hold_en(GPIO_NUM_4);
-    
-  camera_fb_t * fb = NULL;
-  
   // Take Picture with Camera
+  fb = esp_camera_fb_get();  
+  // delay(1000);
   fb = esp_camera_fb_get();  
   if(!fb) {
     Serial.println("Camera capture failed");
     return;
   }
-  // delay(50); // maybe some time after the fb is needed for the flash as well, because flash is not visible in the photo
-  digitalWrite(4, LOW); // turn off LED flash
-
+    // Turns off the ESP32-CAM white on-board LED (flash) connected to GPIO 4
+  pinMode(LEDflash, OUTPUT);
+  digitalWrite(LEDflash, LOW);
+  rtc_gpio_hold_en(GPIO_NUM_4);
+  
   int maxRetriesSendPhoto = 5;
   http.setTimeout(10000); // Set timeout to 10 seconds, to prevent it from waiting indefinitely.
   bool successSendPhoto = false;
 
   if (WiFi.status() == WL_CONNECTED) {
+    http.begin(post_url_image);
+    http.addHeader("Content-Type", "image/jpeg");
     for (int attemptSendPhoto = 1; attemptSendPhoto <= maxRetriesSendPhoto; attemptSendPhoto++) {
       Serial.print("[HTTP] POST photo...\n");
 
       size_t totalSize = fb->len;
       size_t offset = 0;
 
-      http.begin(post_url_image);
-      http.addHeader("Content-Type", "image/jpeg");
       int httpCode = http.sendRequest("POST", fb->buf, fb->len);
       if (httpCode > 0 && httpCode == HTTP_CODE_OK) {
         String payload = http.getString();
@@ -257,12 +263,14 @@ void setupCameraAndTakePhoto() {
   if (!successSendPhoto) {
     Serial.println("Failed to send photo after multiple attempts.");
   }
+  http.end(); 
 }
 
 void goToSleep(){
   Serial.println("Going to sleep now\n\n");
   delay(100);
   WiFi.disconnect(true);
+  digitalWrite(GPS_switch, LOW); // Turn GPS power OFF
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   esp_deep_sleep_start();
   Serial.println("This will never be printed");
@@ -270,7 +278,7 @@ void goToSleep(){
 
 void JSONsendingHTML() {
   int maxRetriesSendJSON = 5; // Number of retries for DNS and HTTP request
-  int retryDelaySendJSON = 2000; // Delay between retries in milliseconds
+  int retryDelaySendJSON = 1000; // Delay between retries in milliseconds
   bool successSendJSON = false; // Flag to check if the request was successful
 
   // Create JSON object
@@ -329,18 +337,18 @@ void temperatureHumidity(){
   sensor.begin(Wire, SHT40_I2C_ADDR_44);
 
   sensor.softReset();
-  delay(10);
-  uint32_t serialNumber = 0;
-  error = sensor.serialNumber(serialNumber);
-  if (error != NO_ERROR) {
-      Serial.print("Error trying to execute serialNumber(): ");
-      errorToString(error, errorMessage, sizeof errorMessage);
-      Serial.println(errorMessage);
-      return;
-  }
-  Serial.print("serialNumber: ");
-  Serial.print(serialNumber);
-  Serial.println();
+  // delay(10);
+  // uint32_t serialNumber = 0;
+  // error = sensor.serialNumber(serialNumber);
+  // if (error != NO_ERROR) {
+  //     Serial.print("Error trying to execute serialNumber(): ");
+  //     errorToString(error, errorMessage, sizeof errorMessage);
+  //     Serial.println(errorMessage);
+  //     return;
+  // }
+  // Serial.print("serialNumber: ");
+  // Serial.print(serialNumber);
+  // Serial.println();
 
   delay(20);
   error = sensor.measureLowestPrecision(aTemperature, aHumidity);
@@ -390,95 +398,51 @@ void getGPS(){
   
   Serial.println("getting GPS function");
 
-  // GPSstartTime = millis(); // Record the start time
+  GPSstartTime = millis(); // Record the start time
 
-  // while (millis() - GPSstartTime < timeLimitConnectionGPS) {  // Loop for limited time
-  //   while (ss.available() > 0) {
-  //     gps.encode(ss.read());
-  //     if (gps.location.isUpdated()) {
-  //       Serial.print("Latitude= ");
-  //       Serial.print(gps.location.lat(), 6);
-  //       Serial.print(" Longitude= ");
-  //       Serial.println(gps.location.lng(), 6);
-  //       gpsUpdated = true;
-  //       break;  // Exit the while loop if GPS location is updated
-  //     }
-  //   }
-  //   if (gpsUpdated) {
-  //     break;  // Exit the outer while loop if GPS location is updated
-  //   }
-  // }
+  while (millis() - GPSstartTime < timeLimitConnectionGPS) {  // Loop for limited time
+    while (ss.available() > 0) {
+      gps.encode(ss.read());
+      if (gps.location.isUpdated()) {
+        aLatitude = gps.location.lat();
+        aLongitude = gps.location.lng();
+        Serial.print("Latitude= ");
+        Serial.print(aLatitude, 6);
+        Serial.print(" Longitude= ");
+        Serial.println(aLongitude, 6);
+        gpsUpdated = true;
+        Serial.println("GPS UPDATED");
+        break;  // Exit the while loop if GPS location is updated
+      }
+    }
+    if (gpsUpdated) {
+      break;  // Exit the outer while loop if GPS location is updated
+    }
+  }
 
-  // if (!gpsUpdated) {
-  //   Serial.println("GPS connection not established within 5 seconds.");
-  // }
+  if (!gpsUpdated) {
+    Serial.println("GPS connection not established within 5 seconds.");
+  }
 
   // digitalWrite(2, LOW); // Turn power OFF GPS
 }
 
-void displayInfo()
-{
-  Serial.print(F("Location: ")); 
-  if (gps.location.isValid())
-  {
-    Serial.print(gps.location.lat(), 6);
-    Serial.print(F(","));
-    Serial.print(gps.location.lng(), 6);
-  }
-  else
-  {
-    Serial.print(F("INVALID"));
-  }
-
-  Serial.print(F("  Date/Time: "));
-  if (gps.date.isValid())
-  {
-    Serial.print(gps.date.month());
-    Serial.print(F("/"));
-    Serial.print(gps.date.day());
-    Serial.print(F("/"));
-    Serial.print(gps.date.year());
-  }
-  else
-  {
-    Serial.print(F("INVALID"));
-  }
-
-  Serial.print(F(" "));
-  if (gps.time.isValid())
-  {
-    if (gps.time.hour() < 10) Serial.print(F("0"));
-    Serial.print(gps.time.hour());
-    Serial.print(F(":"));
-    if (gps.time.minute() < 10) Serial.print(F("0"));
-    Serial.print(gps.time.minute());
-    Serial.print(F(":"));
-    if (gps.time.second() < 10) Serial.print(F("0"));
-    Serial.print(gps.time.second());
-    Serial.print(F("."));
-    if (gps.time.centisecond() < 10) Serial.print(F("0"));
-    Serial.print(gps.time.centisecond());
-  }
-  else
-  {
-    Serial.print(F("INVALID"));
-  }
-
-  Serial.println();
-}
-
 void setup (){
-  pinMode(2, OUTPUT);   // GPS module power management
-  digitalWrite(2, HIGH); // Turn GPS power ON
-
   Serial.begin(9600);
   ss.begin(GPSBaud);
-  
+
   Serial.println("-= ESP32-CAM-CONTAINER =-");
+
+  // PINS SETUP //
+  // rtc_gpio_hold_dis(GPIO_NUM_4);  // disable holding the LED pin low so it can turn on high again for a photo
+  pinMode(GPS_switch, OUTPUT);   // GPS module power management
+  digitalWrite(GPS_switch, HIGH); // Turn GPS power ON
+
+
+  
   temperatureHumidity();
   measureDistance();
-
-  // getGPS(); pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
+  getGPS(); // pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
   // jinak tam jde po UARTu nejakej bordel a cely to jde do <>
 
   if (init_wifi())
@@ -492,7 +456,6 @@ void setup (){
     JSONsendingHTML(); // sends a string to the server
   }
 
-  delay(100);
   goToSleep();
 }
 
@@ -500,7 +463,7 @@ void setup (){
 void loop() {
   // This should never be reached because the device goes to sleep in setup()
   // Serial.println("LOOPING LED");
-  digitalWrite(2, HIGH); // Turn on
+  // digitalWrite(GPS_switch, HIGH); // Turn on
   // delay(2000);
   // goToSleep();
 
@@ -512,6 +475,8 @@ void loop() {
       Serial.print(gps.location.lat(), 6);
       Serial.print(" Longitude= "); 
       Serial.println(gps.location.lng(), 6);
+      break;
     }
   }
+
 }
