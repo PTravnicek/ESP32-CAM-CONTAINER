@@ -20,6 +20,7 @@
 #include <TinyGPS++.h>
 #include <SoftwareSerial.h>
 #include "SparkFun_VL53L1X.h"
+#include <Adafruit_ADS1015.h>
 
 // define the number of bytes you want to access
 #define EEPROM_SIZE 1
@@ -72,17 +73,17 @@ bool internet_connected = false;
 #define rxPinGPS 15  // 15 pin na PCB
 #define txPinGPS 12  // 12 pin na PCB
 
-
 SoftwareSerial ss(rxPinGPS, txPinGPS);
 SensirionI2cSht4x sensor;
 TinyGPSPlus gps;
 HTTPClient http;
 SFEVL53L1X distanceSensor;
+Adafruit_ADS1115 ads(0x48); // Create an instance of the ADS1115
 
 static char errorMessage[64];
 static int16_t error;
 
-unsigned int timeLimitConnectionGPS = 25000; // Milliseconds to get the connection
+unsigned int timeLimitConnectionGPS = 60000; // Milliseconds to get the connection
 unsigned long GPSstartTime = millis();  // Record the start time
 bool gpsUpdated = false;
 
@@ -90,6 +91,7 @@ float aTemperature = 0.0;
 float aHumidity = 0.0;
 float aLatitude = 50.0755;
 float aLongitude = 14.4378;
+float aBattPercentage = 0.0;
 unsigned int aContID = 3;
 unsigned int aStatus = 0; // 0 je neodeslana fotka, 1 je odeslani uspesne
 
@@ -108,6 +110,59 @@ int16_t aDistance = 0;
 bool validDistance = false;
 int attempts = 0;
 // -----------------distance definitions end -----------------
+
+float getBatteryPercentage(float voltage) {
+  // Define the minimum and maximum voltages
+  const float minVoltage = 3.0;
+  const float maxVoltage = 4.2;
+
+  // Ensure the voltage is within the expected range
+  if (voltage > maxVoltage) {
+    voltage = maxVoltage;
+  } else if (voltage < minVoltage) {
+    voltage = minVoltage;
+  }
+
+  // Calculate the percentage
+  float percentage = ((voltage - minVoltage) / (maxVoltage - minVoltage)) * 100;
+  return percentage;
+}
+
+void get_battery_voltage(){
+  Wire.begin(I2C_SDA, I2C_SCL); // reset I2C 
+    // Initialize the ADS1115
+  ads.begin();
+  // int sum = 0;
+  // for(int i=0; i<100; i++) {
+  //   sum = sum + analogRead(ADC_PIN);
+  // }
+  // float result = float(sum)/100.0;
+  // return int(result * (1.3665));
+  // Serial.println(result);
+  
+  int16_t adc0 = ads.readADC_SingleEnded(0);
+  
+  // Convert the ADC value to voltage (assuming the default gain is used, i.e., 2/3x which gives 6.144V range)
+  float voltage = adc0 * 0.1875 / 1000; // ADS1115 gives 16-bit value, 0.1875mV per bit
+  
+  // Scale the voltage back up based on the voltage divider
+  float batteryVoltage = voltage * (10.09 + 7.45) / 7.45; // R1 = 10.09 kOhm R2 = 7.45 kOhm
+
+  // Calculate battery percentage
+  float batteryPercentage = getBatteryPercentage(batteryVoltage);
+
+  Serial.print("ADC0: "); 
+  Serial.print(adc0);
+  Serial.print(" Voltage: ");
+  Serial.println(batteryVoltage);
+
+  Serial.print("Battery Percentage: ");
+  Serial.print(batteryPercentage);
+  Serial.println("%");
+
+  aBattPercentage = batteryPercentage; //Get the result of the measurement from the sensor
+
+}
 
 bool init_wifi() {
   int connAttempts = 5;
@@ -150,7 +205,7 @@ void setupCameraAndTakePhoto() {
   
   if(psramFound()){
     Serial.println("psramFound OK ");
-    config.frame_size = FRAMESIZE_SVGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
+    config.frame_size = FRAMESIZE_UXGA; // FRAMESIZE_ + QVGA|CIF|VGA|SVGA|XGA|SXGA|UXGA
     config.jpeg_quality = 12;
     config.fb_location = CAMERA_FB_IN_PSRAM;  // Use PSRAM for frame buffer
     config.fb_count = 2;
@@ -199,7 +254,7 @@ void setupCameraAndTakePhoto() {
     s->set_exposure_ctrl(s, 0);     // auto exposure off
     s->set_brightness(s, 0);        // (-2 to 2) - set brightness
     s->set_agc_gain(s, 0);          // set gain manually (0 - 30)
-    s->set_aec_value(s, 50);         // set exposure manually  (0-1200)
+    s->set_aec_value(s, 20);         // set exposure manually  (0-1200)
   }
 
 
@@ -224,9 +279,9 @@ void setupCameraAndTakePhoto() {
     // Turns off the ESP32-CAM white on-board LED (flash) connected to GPIO 4
   pinMode(LEDflash, OUTPUT);
   digitalWrite(LEDflash, LOW);
-  rtc_gpio_hold_en(GPIO_NUM_4);
+  // rtc_gpio_hold_en(GPIO_NUM_4);
   
-  int maxRetriesSendPhoto = 5;
+  int maxRetriesSendPhoto = 8;
   http.setTimeout(10000); // Set timeout to 10 seconds, to prevent it from waiting indefinitely.
   bool successSendPhoto = false;
 
@@ -290,6 +345,7 @@ void JSONsendingHTML() {
   jsonDoc["longitude"] = aLongitude;
   jsonDoc["container_id"] = aContID;
   jsonDoc["image_status"] = aStatus;
+  jsonDoc["battery_status"] = aBattPercentage;
 
   esp_camera_fb_return(fb);
   fb = NULL; // Reset the frame buffer pointer
@@ -394,7 +450,6 @@ void measureDistance (){
 }
 
 void getGPS(){
-  digitalWrite(2, HIGH); // Turn power ON
   
   Serial.println("getting GPS function");
 
@@ -421,10 +476,10 @@ void getGPS(){
   }
 
   if (!gpsUpdated) {
-    Serial.println("GPS connection not established within 5 seconds.");
+    Serial.println("GPS connection not established within 60 seconds.");
   }
 
-  // digitalWrite(2, LOW); // Turn power OFF GPS
+  
 }
 
 void setup (){
@@ -438,10 +493,9 @@ void setup (){
   pinMode(GPS_switch, OUTPUT);   // GPS module power management
   digitalWrite(GPS_switch, HIGH); // Turn GPS power ON
 
-
-  
   temperatureHumidity();
   measureDistance();
+  get_battery_voltage();
   getGPS(); // pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
   // jinak tam jde po UARTu nejakej bordel a cely to jde do <>
 
@@ -455,28 +509,18 @@ void setup (){
     setupCameraAndTakePhoto(); // also sends a photo over HTTP protocol
     JSONsendingHTML(); // sends a string to the server
   }
-
   goToSleep();
 }
 
 
 void loop() {
+  Serial.println("LOOPING");
   // This should never be reached because the device goes to sleep in setup()
   // Serial.println("LOOPING LED");
   // digitalWrite(GPS_switch, HIGH); // Turn on
   // delay(2000);
   // goToSleep();
 
-  // This sketch displays information every time a new sentence is correctly encoded.
-  while (ss.available() > 0){
-    gps.encode(ss.read());
-    if (gps.location.isUpdated()){
-      Serial.print("Latitude= "); 
-      Serial.print(gps.location.lat(), 6);
-      Serial.print(" Longitude= "); 
-      Serial.println(gps.location.lng(), 6);
-      break;
-    }
-  }
-
+  get_battery_voltage();
+  delay(1000);
 }
