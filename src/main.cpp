@@ -45,8 +45,9 @@
 
 #define CHUNK_SIZE_PHOTO 4096 // Define chunk size as 4 KB
 
-#define uS_TO_S_FACTOR 1000000  /* Conversion factor for micro seconds to seconds */
-#define TIME_TO_SLEEP  550        /* Time ESP32 will go to sleep (in seconds) */
+#define TIME_TO_SLEEP 3550ULL       // Time ESP32 will go to sleep (in seconds)
+#define uS_TO_S_FACTOR 1000000ULL   // Conversion factor for micro seconds to seconds
+
 
 int pictureNumber = 0;
 const char *ssid = "pvltrv-TX1C";
@@ -83,14 +84,14 @@ Adafruit_ADS1115 ads(0x48); // Create an instance of the ADS1115
 static char errorMessage[64];
 static int16_t error;
 
-unsigned int timeLimitConnectionGPS = 60000; // Milliseconds to get the connection
+unsigned int timeLimitConnectionGPS = 90000; // Milliseconds to get the connection
 unsigned long GPSstartTime = millis();  // Record the start time
 bool gpsUpdated = false;
 
 float aTemperature = 0.0;
 float aHumidity = 0.0;
-float aLatitude = 50.0755;
-float aLongitude = 14.4378;
+float aLatitude ;
+float aLongitude ;
 float aBattPercentage = 0.0;
 unsigned int aContID = 3;
 unsigned int aStatus = 0; // 0 je neodeslana fotka, 1 je odeslani uspesne
@@ -140,10 +141,10 @@ void get_battery_voltage(){
   // return int(result * (1.3665));
   // Serial.println(result);
   
-  int16_t adc0 = ads.readADC_SingleEnded(0);
+  int16_t adc0 = ads.readADC_Differential_0_1();
   
   // Convert the ADC value to voltage (assuming the default gain is used, i.e., 2/3x which gives 6.144V range)
-  float voltage = adc0 * 0.1875 / 1000; // ADS1115 gives 16-bit value, 0.1875mV per bit
+  float voltage = -1 * (adc0 * 0.1875 / 1000); // ADS1115 gives 16-bit value, 0.1875mV per bit
   
   // Scale the voltage back up based on the voltage divider
   float batteryVoltage = voltage * (10.09 + 7.45) / 7.45; // R1 = 10.09 kOhm R2 = 7.45 kOhm
@@ -161,11 +162,10 @@ void get_battery_voltage(){
   Serial.println("%");
 
   aBattPercentage = batteryPercentage; //Get the result of the measurement from the sensor
-
 }
 
 bool init_wifi() {
-  int connAttempts = 5;
+  int connAttempts = 15;
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED && connAttempts > 0) {
     delay(1000);
@@ -184,6 +184,7 @@ void setupCameraAndTakePhoto() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
+
   config.pin_d0 = Y2_GPIO_NUM;
   config.pin_d1 = Y3_GPIO_NUM;
   config.pin_d2 = Y4_GPIO_NUM;
@@ -200,6 +201,7 @@ void setupCameraAndTakePhoto() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
+
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG; 
   
@@ -239,39 +241,54 @@ void setupCameraAndTakePhoto() {
     // s->set_gain_ctrl(s, 1);      // 0 = disable , 1 = enable
     // s->set_agc_gain(s, 0);       // 0 to 30
     // s->set_gainceiling(s, (gainceiling_t)2);  // 0 to 6
-    // s->set_bpc(s, 0);            // 0 = disable , 1 = enable
+    s->set_bpc(s, 1);            // 0 = disable , 1 = enable
     // s->set_wpc(s, 1);            // 0 = disable , 1 = enable
     // s->set_raw_gma(s, 1);        // 0 = disable , 1 = enable
     // s->set_lenc(s, 1);           // 0 = disable , 1 = enable
-    // s->set_hmirror(s, 0);        // 0 = disable , 1 = enable
-    // s->set_vflip(s, 0);          // 0 = disable , 1 = enable
     // s->set_dcw(s, 1);            // 0 = disable , 1 = enable
     // s->set_colorbar(s, 0);       // 0 = disable , 1 = enable
-    // s->set_aec2(s, 1);           // 0 = disable , 1 = enable
+    s->set_aec2(s, 1);           // 0 = disable , 1 = enable
 
-    s->set_gain_ctrl(s, 0);         // auto gain off
-    s->set_awb_gain(s, 1);          // Auto White Balance enable (0 or 1)
-    s->set_exposure_ctrl(s, 0);     // auto exposure off
-    s->set_brightness(s, 0);        // (-2 to 2) - set brightness
-    s->set_agc_gain(s, 0);          // set gain manually (0 - 30)
-    s->set_aec_value(s, 20);         // set exposure manually  (0-1200)
+
+    s->set_vflip(s, 1);          // 0 = disable , 1 = enable
+    s->set_hmirror(s, 1);        // 0 = disable , 1 = enable
+    s->set_gain_ctrl(s, 1);         //auto gain 0 = disable , 1 = enable
+    s->set_awb_gain(s, 1);          // Auto White Balance ENABLE(0 = disable , 1 = enable)
+    s->set_exposure_ctrl(s, 1);     // auto exposure ON
+    // s->set_brightness(s, 0);        // (-2 to 2) - set brightness
+    // s->set_agc_gain(s, 0);          // set gain manually (0 - 30)
+    // s->set_aec_value(s, 110);         // set exposure manually  (0-1200)
   }
 
 
   // Ensure GPIO 4 is set up before camera initialization
-  pinMode(GPIO_NUM_4, OUTPUT);
-  digitalWrite(GPIO_NUM_4, HIGH); // Ensure the LED is off initially
+  // pinMode(GPIO_NUM_4, OUTPUT);
+  // digitalWrite(GPIO_NUM_4, HIGH); // Ensure the LED is off initially
   // digitalWrite(4, HIGH); // turn on LED flash, delay after to let it turn on fully
-  delay(300);
+  // delay(300);
   // rtc_gpio_hold_en(GPIO_NUM_4);
   /* sufficient time to let the YAVG value stabilize before esp_camera_fb_get, 
   than the photo is almost perfect and I do not suffer any more of the 
   "dark tint after restart"
   */
-  // Take Picture with Camera
-  fb = esp_camera_fb_get();  
-  // delay(1000);
-  fb = esp_camera_fb_get();  
+
+  // After initializing the camera
+  delay(3000); // Wait for 1 second
+
+// Capture and discard initial frames
+for (int i = 0; i < 5; i++) {
+    camera_fb_t * temp_fb = esp_camera_fb_get();
+    if (temp_fb) {
+        esp_camera_fb_return(temp_fb);
+    }
+    delay(500); // Wait between frames
+}
+
+
+  // Now capture the actual frame you want to use
+  fb = esp_camera_fb_get();
+  delay(1000); // Wait for 1 second
+
   if(!fb) {
     Serial.println("Camera capture failed");
     return;
@@ -279,7 +296,7 @@ void setupCameraAndTakePhoto() {
     // Turns off the ESP32-CAM white on-board LED (flash) connected to GPIO 4
   pinMode(LEDflash, OUTPUT);
   digitalWrite(LEDflash, LOW);
-  // rtc_gpio_hold_en(GPIO_NUM_4);
+  rtc_gpio_hold_en(GPIO_NUM_4);
   
   int maxRetriesSendPhoto = 8;
   http.setTimeout(10000); // Set timeout to 10 seconds, to prevent it from waiting indefinitely.
@@ -318,6 +335,13 @@ void setupCameraAndTakePhoto() {
   if (!successSendPhoto) {
     Serial.println("Failed to send photo after multiple attempts.");
   }
+
+    // After sending the photo or if an error occurs
+  if (fb) {
+    esp_camera_fb_return(fb);
+    fb = NULL; // Reset the frame buffer pointer
+  }
+
   http.end(); 
 }
 
@@ -326,7 +350,7 @@ void goToSleep(){
   delay(100);
   WiFi.disconnect(true);
   digitalWrite(GPS_switch, LOW); // Turn GPS power OFF
-  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  esp_sleep_enable_timer_wakeup((uint64_t)TIME_TO_SLEEP * (uint64_t)uS_TO_S_FACTOR);
   esp_deep_sleep_start();
   Serial.println("This will never be printed");
 }
@@ -336,16 +360,22 @@ void JSONsendingHTML() {
   int retryDelaySendJSON = 1000; // Delay between retries in milliseconds
   bool successSendJSON = false; // Flag to check if the request was successful
 
+  // Convert aTemperature and aHumidity to integers
+  int intTemperature = static_cast<int>(aTemperature);
+  int intHumidity = static_cast<int>(aHumidity);
+  int intDistance = static_cast<int>(aDistance);
+  int intBattPercentage = static_cast<int>(aBattPercentage);
+
   // Create JSON object
   StaticJsonDocument<200> jsonDoc;
-  jsonDoc["temperature"] = aTemperature;
-  jsonDoc["humidity"] = aHumidity;
-  jsonDoc["distance"] = aDistance;
+  jsonDoc["temperature"] = intTemperature;
+  jsonDoc["humidity"] = intHumidity;
+  jsonDoc["distance"] = intDistance;
   jsonDoc["latitude"] = aLatitude;
   jsonDoc["longitude"] = aLongitude;
   jsonDoc["container_id"] = aContID;
   jsonDoc["image_status"] = aStatus;
-  jsonDoc["battery_status"] = aBattPercentage;
+  jsonDoc["battery_status"] = intBattPercentage;
 
   esp_camera_fb_return(fb);
   fb = NULL; // Reset the frame buffer pointer
@@ -432,7 +462,7 @@ void measureDistance (){
 
   if (distanceSensor.begin() != 0) //Begin returns 0 on a good init
   {
-    Serial.println("Sensor failed to begin. Please check wiring. Freezing...");
+    Serial.println("measureDistance Sensor failed to begin. Please check wiring. Freezing...");
     while (1)
       ;
   }
@@ -477,6 +507,8 @@ void getGPS(){
 
   if (!gpsUpdated) {
     Serial.println("GPS connection not established within 60 seconds.");
+    aLatitude = 0.0;
+    aLongitude = 0.0;
   }
 
   
@@ -493,11 +525,11 @@ void setup (){
   pinMode(GPS_switch, OUTPUT);   // GPS module power management
   digitalWrite(GPS_switch, HIGH); // Turn GPS power ON
 
-  temperatureHumidity();
-  measureDistance();
-  get_battery_voltage();
-  getGPS(); // pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
-  // jinak tam jde po UARTu nejakej bordel a cely to jde do <>
+  // temperatureHumidity();
+  // measureDistance();
+  // get_battery_voltage();
+  // getGPS(); // pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
+  // // jinak tam jde po UARTu nejakej bordel a cely to jde do <>
 
   if (init_wifi())
   { // Connected to WiFi
@@ -506,6 +538,12 @@ void setup (){
   }
 
   if (internet_connected) {
+    temperatureHumidity();
+    measureDistance();
+    get_battery_voltage();
+    getGPS(); // pokud je GPS na tranzistoru tak je asi nutne zajistit, aby tam uz od zapnuti bylo dostatecne napeti,
+    // jinak tam jde po UARTu nejakej bordel a cely to jde do <>
+
     setupCameraAndTakePhoto(); // also sends a photo over HTTP protocol
     JSONsendingHTML(); // sends a string to the server
   }
@@ -521,6 +559,6 @@ void loop() {
   // delay(2000);
   // goToSleep();
 
-  get_battery_voltage();
-  delay(1000);
+  // get_battery_voltage();
+  // delay(1000);
 }
